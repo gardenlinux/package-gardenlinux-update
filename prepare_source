@@ -1,0 +1,3 @@
+import_src src
+pkg=gardenlinux-update
+version=0.1

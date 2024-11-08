@@ -1,0 +1,11 @@
+Source: gardenlinux-update
+Section: os
+Priority: optional
+Maintainer: Garden Linux Builder <contact@gardenlinux.io>
+Build-Depends: debhelper-compat (= 13), golang
+Standards-Version: 4.5.1
+
+Package: gardenlinux-update
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3
+Description: Update tool for GardenLinux
