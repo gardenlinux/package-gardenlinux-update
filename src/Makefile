@@ -1,4 +1,4 @@
-gardenlinux-update:
+gardenlinux-update: main.go
 	GO111MODULE=on go build -mod=vendor
 
 install:
