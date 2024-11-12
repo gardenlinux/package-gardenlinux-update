@@ -261,18 +261,13 @@ func main() {
 	media_type := flag.String("media-type", "application/io.gardenlinux.uki", "artifact media type to fetch")
 	target_dir := flag.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
-
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <version>\n", os.Args[0])
-		flag.PrintDefaults()
-	}
-
+	version := flag.String("version", "", "Version to update to: e.g. 1443.0")
 	flag.Parse()
-	if flag.NArg() < 1 {
+
+	if *version == "" {
 		fmt.Println("Error: version argument is required")
 		os.Exit(1)
 	}
-	version := flag.Arg(0)
 
 	cname, current_version, err := getCname(*os_release_path)
 	if err != nil {
@@ -286,7 +281,7 @@ func main() {
 		panic(err)
 	}
 
-	digest, err := getManifestDigestByCname(repo, ctx, version, cname)
+	digest, err := getManifestDigestByCname(repo, ctx, *version, cname)
 	if err != nil {
 		panic(err)
 	}
@@ -298,7 +293,7 @@ func main() {
 
 	space_required := size + (1024 * 1024)
 
-	target_path := *target_dir + "/" + cname + "-" + version + "+3.efi"
+	target_path := *target_dir + "/" + cname + "-" + *version + "+3.efi"
 
 	space, err := getAvailableSpace(*target_dir)
 	if err != nil {
