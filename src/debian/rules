@@ -1,6 +1,14 @@
 #!/usr/bin/make -f
 
+include /usr/share/dpkg/default.mk
+export DH_GOPKG := gardenlinux-update
+
 %:
-	dh $@
+	dh $@ --builddirectory=_build --buildsystem=golang --with=golang
+
+override_dh_auto_install:
+	dh_auto_install -- --no-source
+
+override_dh_auto_test::
 
 override_dh_dwz:

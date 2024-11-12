@@ -2,7 +2,7 @@ Source: gardenlinux-update
 Section: os
 Priority: optional
 Maintainer: Garden Linux Builder <contact@gardenlinux.io>
-Build-Depends: debhelper-compat (= 13), golang
+Build-Depends: debhelper-compat (= 13), golang-any, dh-exec, dh-golang
 Standards-Version: 4.5.1
 
 Package: gardenlinux-update
