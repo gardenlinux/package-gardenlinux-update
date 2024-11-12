@@ -84,14 +84,14 @@ func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[
 }
 
 func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, error) {
-	manifest, err := getManifest(repo, ctx, tag)
+	index, err := getManifest(repo, ctx, tag)
 	if err != nil {
 		return "", err
 	}
 
 	var digest string
 
-	for _, entry := range manifest["manifests"].([]interface{}) {
+	for _, entry := range index["manifests"].([]interface{}) {
 		item := entry.(map[string]interface{})
 		item_digest := item["digest"].(string)
 		item_annotations := item["annotations"].(map[string]interface{})
