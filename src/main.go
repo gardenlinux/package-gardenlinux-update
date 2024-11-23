@@ -56,6 +56,25 @@ func getCname(path string) (string, string, error) {
 	return cname, version, nil
 }
 
+func checkEFI(expected_loader_entry string) error {
+	_, err := os.Stat("/sys/firmware/efi")
+	if err != nil {
+		return errors.New("not EFI booted")
+	}
+
+	data, err := os.ReadFile("/sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f")
+	if err != nil {
+		return errors.New("not booted with systemd EFI stub")
+	}
+
+	loader_entry := string(data[4:])
+	if loader_entry != expected_loader_entry {
+		return errors.New("booted entry does not match expected value")
+	}
+
+	return nil
+}
+
 func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[string]interface{}, error) {
 	manifest_descriptor, err := repo.Resolve(ctx, ref)
 	if err != nil {
@@ -261,6 +280,7 @@ func main() {
 	media_type := flag.String("media-type", "application/io.gardenlinux.uki", "artifact media type to fetch")
 	target_dir := flag.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
+	skip_efi_check := flag.Bool("skip-efi-check", false, "skip performing EFI safety checks")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <version>\n", os.Args[0])
@@ -277,6 +297,13 @@ func main() {
 	cname, current_version, err := getCname(*os_release_path)
 	if err != nil {
 		panic(err)
+	}
+
+	if !*skip_efi_check {
+		err = checkEFI(cname + "-" + current_version + ".efi")
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	ctx := context.Background()
