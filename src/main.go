@@ -57,7 +57,7 @@ func getCname(path string) (string, string, error) {
 }
 
 func checkEFI(expected_loader_entry string) error {
-	_, err := os.Stat("sys/firmware/efi")
+	_, err := os.Stat("/sys/firmware/efi")
 	if err != nil {
 		return errors.New("not EFI booted")
 	}
@@ -67,11 +67,12 @@ func checkEFI(expected_loader_entry string) error {
 		return errors.New("not booted with systemd EFI stub")
 	}
 
-	if string(data[4:]) == expected_loader_entry {
-		return nil
-	} else {
+	loader_entry := string(data[4:])
+	if loader_entry != expected_loader_entry {
 		return errors.New("booted entry does not match expected value")
 	}
+
+	return nil
 }
 
 func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[string]interface{}, error) {
