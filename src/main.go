@@ -50,8 +50,17 @@ func getCname(path string) (string, string, error) {
 	}
 
 	os_release := parseOsRelease(string(os_release_content))
-	version := os_release["GARDENLINUX_VERSION"]
-	cname := strings.Trim(os_release["GARDENLINUX_CNAME"], "-"+version)
+	version, ok := os_release["GARDENLINUX_VERSION"]
+	if !ok {
+		return "", "", errors.New("GARDENLINUX_VERSION missing from os-release")
+	}
+
+	cname, ok := os_release["GARDENLINUX_CNAME"]
+	if !ok {
+		return "", "", errors.New("GARDENLINUX_CNAME missing from os-release")
+	}
+
+	cname = strings.Trim(cname, "-"+version)
 
 	return cname, version, nil
 }
@@ -276,33 +285,42 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 }
 
 func main() {
-	repo_url := flag.String("repo", "ghcr.io/gardenlinux/gl-oci", "OCI repository to download from")
-	media_type := flag.String("media-type", "application/io.gardenlinux.uki", "artifact media type to fetch")
-	target_dir := flag.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
-	os_release_path := flag.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
-	skip_efi_check := flag.Bool("skip-efi-check", false, "skip performing EFI safety checks")
+	flag_set := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	flag_set.SetOutput(os.Stderr)
 
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <version>\n", os.Args[0])
-		flag.PrintDefaults()
+	repo_url := flag_set.String("repo", "ghcr.io/gardenlinux/gl-oci", "OCI repository to download from")
+	media_type := flag_set.String("media-type", "application/io.gardenlinux.uki", "artifact media type to fetch")
+	target_dir := flag_set.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
+	os_release_path := flag_set.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
+	skip_efi_check := flag_set.Bool("skip-efi-check", false, "skip performing EFI safety checks")
+
+	flag_set.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <version>\n\n", os.Args[0])
+		flag_set.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nexit codes:\n\t0: success\n\t1: invalid arguments\n\t2: system failure\n\t3: network problems\n")
 	}
 
-	flag.Parse()
-	if flag.NArg() < 1 {
-		fmt.Println("Error: version argument is required")
+	if err := flag_set.Parse(os.Args[1:]); err != nil {
 		os.Exit(1)
 	}
-	version := flag.Arg(0)
+
+	if flag_set.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: version argument is required")
+		os.Exit(1)
+	}
+	version := flag_set.Arg(0)
 
 	cname, current_version, err := getCname(*os_release_path)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
 	}
 
 	if !*skip_efi_check {
 		err = checkEFI(cname + "-" + current_version + ".efi")
 		if err != nil {
-			panic(err)
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(2)
 		}
 	}
 
@@ -310,17 +328,20 @@ func main() {
 
 	repo, err := remote.NewRepository(*repo_url)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
 	}
 
 	digest, err := getManifestDigestByCname(repo, ctx, version, cname)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(3)
 	}
 
 	layer, size, err := getLayerByMediaType(repo, ctx, digest, *media_type)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(3)
 	}
 
 	space_required := size + (1024 * 1024)
@@ -329,14 +350,16 @@ func main() {
 
 	space, err := getAvailableSpace(*target_dir)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(2)
 	}
 
 	if space < space_required {
 		space_wanted := space_required - space
 		err := garbageClean(*target_dir, cname, current_version, int64(space_wanted))
 		if err != nil {
-			panic(err)
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(2)
 		}
 	}
 
@@ -344,23 +367,27 @@ func main() {
 
 	layer_descriptor, err := repo.Blobs().Resolve(ctx, layer)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(3)
 	}
 
 	layer_stream, err := repo.Fetch(ctx, layer_descriptor)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(3)
 	}
 	defer layer_stream.Close()
 
 	target_file, err := os.Create(target_path)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(2)
 	}
 	defer target_file.Close()
 
 	_, err = io.Copy(target_file, layer_stream)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(3)
 	}
 }
