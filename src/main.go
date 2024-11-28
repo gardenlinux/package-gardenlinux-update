@@ -112,16 +112,20 @@ func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[
 }
 
 func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, error) {
-	manifest, err := getManifest(repo, ctx, tag)
+	index, err := getManifest(repo, ctx, tag)
 	if err != nil {
 		return "", err
 	}
 
 	var digest string
 
-	for _, entry := range manifest["manifests"].([]interface{}) {
+	for _, entry := range index["manifests"].([]interface{}) {
 		item := entry.(map[string]interface{})
 		item_digest := item["digest"].(string)
+		// annotations only exist for gardenlinux artifacts, "normal" container runtime entries do not have that field
+		if item["annotations"] == nil {
+			continue
+		}
 		item_annotations := item["annotations"].(map[string]interface{})
 		item_cname := item_annotations["cname"].(string)
 
@@ -360,6 +364,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_NETWORK_PROBLEMS)
+	}
+	if layer == "" || size == 0 {
+		fmt.Println(os.Stderr, "No layer found for " + cname + " version: " + version + "  and mediatype" + *media_type + " on " + *repo_url)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	space_required := size + (1024 * 1024)
