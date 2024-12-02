@@ -276,7 +276,7 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 }
 
 func main() {
-	repo_url := flag.String("repo", "ghcr.io/gardenlinux/gl-oci", "OCI repository to download from")
+	repo_url := flag.String("repo", "ghcr.io/gardenlinux/gardenlinux", "OCI repository to download from")
 	media_type := flag.String("media-type", "application/io.gardenlinux.uki", "artifact media type to fetch")
 	target_dir := flag.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
