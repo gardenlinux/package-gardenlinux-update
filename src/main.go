@@ -284,6 +284,10 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 	return nil
 }
 
+const ERR_INVALID_ARGUMENTS = 1
+const ERR_SYSTEM_FAILURE = 2
+const ERR_NETWORK_PROBLEMS = 3
+
 func main() {
 	flag_set := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	flag_set.SetOutput(os.Stderr)
@@ -301,26 +305,26 @@ func main() {
 	}
 
 	if err := flag_set.Parse(os.Args[1:]); err != nil {
-		os.Exit(1)
+		os.Exit(ERR_INVALID_ARGUMENTS)
 	}
 
 	if flag_set.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "Error: version argument is required")
-		os.Exit(1)
+		os.Exit(ERR_INVALID_ARGUMENTS)
 	}
 	version := flag_set.Arg(0)
 
 	cname, current_version, err := getCname(*os_release_path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+		os.Exit(ERR_INVALID_ARGUMENTS)
 	}
 
 	if !*skip_efi_check {
 		err = checkEFI(cname + "-" + current_version + ".efi")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(2)
+			os.Exit(ERR_SYSTEM_FAILURE)
 		}
 	}
 
@@ -329,19 +333,19 @@ func main() {
 	repo, err := remote.NewRepository(*repo_url)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+		os.Exit(ERR_INVALID_ARGUMENTS)
 	}
 
 	digest, err := getManifestDigestByCname(repo, ctx, version, cname)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(3)
+		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 
 	layer, size, err := getLayerByMediaType(repo, ctx, digest, *media_type)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(3)
+		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 
 	space_required := size + (1024 * 1024)
@@ -351,7 +355,7 @@ func main() {
 	space, err := getAvailableSpace(*target_dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(2)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	if space < space_required {
@@ -359,7 +363,7 @@ func main() {
 		err := garbageClean(*target_dir, cname, current_version, int64(space_wanted))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(2)
+			os.Exit(ERR_SYSTEM_FAILURE)
 		}
 	}
 
@@ -368,26 +372,26 @@ func main() {
 	layer_descriptor, err := repo.Blobs().Resolve(ctx, layer)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(3)
+		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 
 	layer_stream, err := repo.Fetch(ctx, layer_descriptor)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(3)
+		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 	defer layer_stream.Close()
 
 	target_file, err := os.Create(target_path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(2)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 	defer target_file.Close()
 
 	_, err = io.Copy(target_file, layer_stream)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(3)
+		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 }
