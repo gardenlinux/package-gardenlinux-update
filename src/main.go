@@ -292,7 +292,7 @@ func main() {
 	flag_set := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	flag_set.SetOutput(os.Stderr)
 
-	repo_url := flag_set.String("repo", "ghcr.io/gardenlinux/gl-oci", "OCI repository to download from")
+	repo_url := flag_set.String("repo", "ghcr.io/gardenlinux/gardenlinux", "OCI repository to download from")
 	media_type := flag_set.String("media-type", "application/io.gardenlinux.uki", "artifact media type to fetch")
 	target_dir := flag_set.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag_set.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
