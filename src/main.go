@@ -2,7 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -288,13 +294,49 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 	return nil
 }
 
-func verify_manifest(repo *remote.Repository, ctx context.Context, digest string) {
-	signature_tag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
-	signature_manifest, err := getManifest(repo, ctx, signature_tag)
+func verifyManifest(repo *remote.Repository, ctx context.Context, digest string) {
+	signatureTag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
+	signatureManifest, err := getManifest(repo, ctx, signatureTag)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(signature_manifest["layers"].([]interface{})[0].(map[string]interface{}))
+	signatureStr := signatureManifest["layers"].([]interface{})[0].(map[string]interface{})["annotations"].(map[string]interface{})["dev.cosignproject.cosign/signature"].(string)
+	signature, err := base64.StdEncoding.DecodeString(signatureStr)
+
+	messageHashStr := strings.Trim(signatureManifest["layers"].([]interface{})[0].(map[string]interface{})["digest"].(string), "sha256:")
+	messageHash, err := hex.DecodeString(messageHashStr)
+	if err != nil {
+		fmt.Printf("Error decoding messageHashStr: %s\n", err)
+	}
+	fmt.Println(signature)
+	fmt.Println(messageHash)
+
+	// Key -> hardcode / read from disk
+	keyData, err := os.ReadFile("key")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Keyfile loaded.")
+
+	block, _ := pem.Decode(keyData)
+	if block == nil {
+		panic("unable to PEM decode provided key")
+	}
+	fmt.Println("PEM data loaded.")
+
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Key loaded.")
+
+	err = rsa.VerifyPKCS1v15(pubKey.(*rsa.PublicKey), crypto.SHA256, messageHash[:], signature)
+	if err == nil {
+		fmt.Println("Verified OK")
+	} else {
+		panic(err)
+	}
+
 	panic("bye")
 
 }
@@ -358,7 +400,7 @@ func main() {
 	}
 
 	// verify the signature here
-	verify_manifest(repo, ctx, digest)
+	verifyManifest(repo, ctx, digest)
 
 	layer, size, err := getLayerByMediaType(repo, ctx, digest, *media_type)
 	if err != nil {
@@ -366,7 +408,7 @@ func main() {
 		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 	if layer == "" || size == 0 {
-		fmt.Println(os.Stderr, "No layer found for " + cname + " version: " + version + "  and mediatype" + *media_type + " on " + *repo_url)
+		fmt.Println(os.Stderr, "No layer found for "+cname+" version: "+version+"  and mediatype"+*media_type+" on "+*repo_url)
 		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
