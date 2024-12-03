@@ -1,3 +1,4 @@
 import_src src
 pkg=gardenlinux-update
 version=0.4
+version_suffix=gl0
