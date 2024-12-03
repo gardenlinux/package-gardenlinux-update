@@ -284,6 +284,17 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 	return nil
 }
 
+func verify_manifest(repo *remote.Repository, ctx context.Context, digest string) {
+	signature_tag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
+	signature_manifest, err := getManifest(repo, ctx, signature_tag)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(signature_manifest["layers"].([]interface{})[0].(map[string]interface{}))
+	panic("bye")
+
+}
+
 const ERR_INVALID_ARGUMENTS = 1
 const ERR_SYSTEM_FAILURE = 2
 const ERR_NETWORK_PROBLEMS = 3
@@ -341,6 +352,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
+
+	// verify the signature here
+	verify_manifest(repo, ctx, digest)
 
 	layer, size, err := getLayerByMediaType(repo, ctx, digest, *media_type)
 	if err != nil {
