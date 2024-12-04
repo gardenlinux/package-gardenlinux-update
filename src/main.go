@@ -117,6 +117,25 @@ func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[
 	return manifest, nil
 }
 
+func getBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte, error) {
+	manifestDescriptor, err := repo.Resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	manifestStream, err := repo.Fetch(ctx, manifestDescriptor)
+	if err != nil {
+		return nil, err
+	}
+	defer manifestStream.Close()
+
+	manifestContent, err := io.ReadAll(manifestStream)
+	if err != nil {
+		return nil, err
+	}
+
+	return manifestContent, nil
+}
+
 func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, error) {
 	index, err := getManifest(repo, ctx, tag)
 	if err != nil {
@@ -294,23 +313,35 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 	return nil
 }
 
+// TODO exit codes and error handling, replace panics with fmt.Println to stderr + os.Exit
 func verifyManifest(repo *remote.Repository, ctx context.Context, digest string) {
 	signatureTag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
-	signatureManifest, err := getManifest(repo, ctx, signatureTag)
+	// TODO golang type for Manifest?
+	signatureManifestBytes, err := getBytes(repo, ctx, signatureTag)
 	if err != nil {
 		panic(err)
 	}
-	signatureStr := signatureManifest["layers"].([]interface{})[0].(map[string]interface{})["annotations"].(map[string]interface{})["dev.cosignproject.cosign/signature"].(string)
+
+	signatureManifest := SignatureManifest{}
+	err = json.Unmarshal(signatureManifestBytes, &signatureManifest)
+	if err != nil {
+		panic(err)
+	}
+	// types
+	signatureStr := signatureManifest.Layers[0].Annotations.Signature
 	signature, err := base64.StdEncoding.DecodeString(signatureStr)
 
-	messageHashStr := strings.Trim(signatureManifest["layers"].([]interface{})[0].(map[string]interface{})["digest"].(string), "sha256:")
+	// TODO proper verification
+	// Here we pull the messageHashStr. This is insufficient for a proper signature verification. We have to
+	// check the messages contents, validate that it contains the correct manifest digest, and then hash it ourselves.
+	// types
+	messageHashStr := strings.Trim(signatureManifest.Layers[0].Digest, "sha256:")
 	messageHash, err := hex.DecodeString(messageHashStr)
 	if err != nil {
-		fmt.Printf("Error decoding messageHashStr: %s\n", err)
+		panic(fmt.Errorf("Error decoding messageHashStr: %s\n", err))
 	}
-	fmt.Println(signature)
-	fmt.Println(messageHash)
 
+	// TODO key input (two methods, one baked in key, and command line flag)
 	// Key -> hardcode / read from disk
 	keyData, err := os.ReadFile("key")
 	if err != nil {
@@ -338,7 +369,6 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest string)
 	}
 
 	panic("bye")
-
 }
 
 const ERR_INVALID_ARGUMENTS = 1
