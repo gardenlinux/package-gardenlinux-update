@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -117,7 +119,7 @@ func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[
 	return manifest, nil
 }
 
-func getBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte, error) {
+func getManifestBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte, error) {
 	manifestDescriptor, err := repo.Resolve(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -134,6 +136,25 @@ func getBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte,
 	}
 
 	return manifestContent, nil
+}
+
+func getBlobBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte, error) {
+	manifestDescriptor, err := repo.Blobs().Resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	manifestStream, err := repo.Fetch(ctx, manifestDescriptor)
+	if err != nil {
+		return nil, err
+	}
+	defer manifestStream.Close()
+
+	blobContent, err := io.ReadAll(manifestStream)
+	if err != nil {
+		return nil, err
+	}
+
+	return blobContent, nil
 }
 
 func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, error) {
@@ -315,7 +336,7 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 
 func verifyManifest(repo *remote.Repository, ctx context.Context, digest string) {
 	signatureTag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
-	signatureManifestBytes, err := getBytes(repo, ctx, signatureTag)
+	signatureManifestBytes, err := getManifestBytes(repo, ctx, signatureTag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_NETWORK_PROBLEMS)
@@ -335,15 +356,42 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest string)
 		os.Exit(ERR_INVALID_FORMAT)
 	}
 
-	// TODO proper verification
-	// Here we pull the messageHashStr. This is insufficient for a proper signature verification. We have to
-	// check the messages contents, validate that it contains the correct manifest digest, and then hash it ourselves.
-	// types
-	messageHashStr := strings.Trim(signatureManifest.Layers[0].Digest, "sha256:")
-	messageHash, err := hex.DecodeString(messageHashStr)
+	messageHashStr := signatureManifest.Layers[0].Digest
+	messageHashFromManifest, err := hex.DecodeString(strings.Trim(messageHashStr, "sha256:"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_INVALID_FORMAT)
+	}
+
+	// Here we pull the messageHashStr. This is insufficient for a proper signature verification. We have to
+	// check the messages contents, validate that it contains the correct manifest digest, and then hash it ourselves.
+
+	// 1. Get signed message
+	message, err := getBlobBytes(repo, ctx, messageHashStr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error fetching signed message:", err)
+		os.Exit(ERR_NETWORK_PROBLEMS)
+	}
+	signatureMessage := SignatureMessage{}
+	err = json.Unmarshal(message, &signatureMessage)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error unmarshalling signature message:", err)
+		os.Exit(ERR_INVALID_FORMAT)
+	}
+	// 2. Check if correct digest is in the signed message
+	if digest != signatureMessage.Critical.Image.DockerManifestDigest {
+		fmt.Fprintln(os.Stderr, "Error during signature verification, the digest of the manifest to be verified ", digest, " is not equal to the digest that is in the signed message ", signatureMessage.Critical.Image.DockerManifestDigest)
+		os.Exit(ERR_INVALID_SIGNATURE)
+	}
+
+	// 3. hash the signature message
+	hashed := sha256.Sum256(message)
+	// 4. check if hash in signaturemanifest == locally computed hash of the message
+	if !bytes.Equal(hashed[:], messageHashFromManifest) {
+		fmt.Fprintln(os.Stderr, "Error: the locally computed digest of the signed message (",
+			messageHashFromManifest, "), does not match the digest from the signature manifest (",
+			messageHashStr)
+		os.Exit(ERR_INVALID_SIGNATURE)
 	}
 
 	// TODO key input (two methods, one baked in key, and command line flag)
@@ -366,7 +414,7 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest string)
 		os.Exit(ERR_INVALID_FORMAT)
 	}
 
-	err = rsa.VerifyPKCS1v15(pubKey.(*rsa.PublicKey), crypto.SHA256, messageHash[:], signature)
+	err = rsa.VerifyPKCS1v15(pubKey.(*rsa.PublicKey), crypto.SHA256, messageHashFromManifest[:], signature)
 	if err == nil {
 		fmt.Println("Verified OK")
 	} else {
@@ -374,7 +422,6 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest string)
 		os.Exit(ERR_INVALID_SIGNATURE)
 	}
 
-	panic("bye")
 }
 
 const (
@@ -449,10 +496,11 @@ func main() {
 		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 	if layer == "" || size == 0 {
-		fmt.Println(os.Stderr, "No layer found for "+cname+" version: "+version+"  and mediatype"+*media_type+" on "+*repo_url)
+		fmt.Fprintln(os.Stderr, "No layer found for "+cname+" version: "+version+"  and mediatype"+*media_type+" on "+*repo_url)
 		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
+	panic(layer)
 	space_required := size + (1024 * 1024)
 
 	target_path := *target_dir + "/" + cname + "-" + version + "+3.efi"
