@@ -313,23 +313,27 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 	return nil
 }
 
-// TODO exit codes and error handling, replace panics with fmt.Println to stderr + os.Exit
 func verifyManifest(repo *remote.Repository, ctx context.Context, digest string) {
 	signatureTag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
-	// TODO golang type for Manifest?
 	signatureManifestBytes, err := getBytes(repo, ctx, signatureTag)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 
 	signatureManifest := SignatureManifest{}
 	err = json.Unmarshal(signatureManifestBytes, &signatureManifest)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_INVALID_FORMAT)
 	}
 	// types
 	signatureStr := signatureManifest.Layers[0].Annotations.Signature
 	signature, err := base64.StdEncoding.DecodeString(signatureStr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_INVALID_FORMAT)
+	}
 
 	// TODO proper verification
 	// Here we pull the messageHashStr. This is insufficient for a proper signature verification. We have to
@@ -338,42 +342,49 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest string)
 	messageHashStr := strings.Trim(signatureManifest.Layers[0].Digest, "sha256:")
 	messageHash, err := hex.DecodeString(messageHashStr)
 	if err != nil {
-		panic(fmt.Errorf("Error decoding messageHashStr: %s\n", err))
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_INVALID_FORMAT)
 	}
 
 	// TODO key input (two methods, one baked in key, and command line flag)
 	// Key -> hardcode / read from disk
 	keyData, err := os.ReadFile("key")
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error loading key:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
-	fmt.Println("Keyfile loaded.")
 
 	block, _ := pem.Decode(keyData)
 	if block == nil {
-		panic("unable to PEM decode provided key")
+		fmt.Fprintln(os.Stderr, "Error decoding pemdata.")
+		os.Exit(ERR_INVALID_FORMAT)
 	}
-	fmt.Println("PEM data loaded.")
 
 	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Error parsing key:", err)
+		os.Exit(ERR_INVALID_FORMAT)
 	}
-	fmt.Println("Key loaded.")
 
 	err = rsa.VerifyPKCS1v15(pubKey.(*rsa.PublicKey), crypto.SHA256, messageHash[:], signature)
 	if err == nil {
 		fmt.Println("Verified OK")
 	} else {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Invalid signature:", err)
+		os.Exit(ERR_INVALID_SIGNATURE)
 	}
 
 	panic("bye")
 }
 
-const ERR_INVALID_ARGUMENTS = 1
-const ERR_SYSTEM_FAILURE = 2
-const ERR_NETWORK_PROBLEMS = 3
+const (
+	_ = iota
+	ERR_INVALID_ARGUMENTS
+	ERR_SYSTEM_FAILURE
+	ERR_NETWORK_PROBLEMS
+	ERR_INVALID_FORMAT    // errors during type conversion
+	ERR_INVALID_SIGNATURE // manifest not signed correctly
+)
 
 func main() {
 	flag_set := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
