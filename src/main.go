@@ -334,7 +334,7 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 	return nil
 }
 
-func verifyManifest(repo *remote.Repository, ctx context.Context, digest string) {
+func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verificationKeyFile string) {
 	signatureTag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
 	signatureManifestBytes, err := getManifestBytes(repo, ctx, signatureTag)
 	if err != nil {
@@ -394,14 +394,32 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest string)
 		os.Exit(ERR_INVALID_SIGNATURE)
 	}
 
-	// TODO key input (two methods, one baked in key, and command line flag)
-	// Key -> hardcode / read from disk
-	keyData, err := os.ReadFile("key")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error loading key:", err)
-		os.Exit(ERR_SYSTEM_FAILURE)
+	pubKey := getVerificationKey(verificationKeyFile)
+
+	err = rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, messageHashFromManifest[:], signature)
+	if err == nil {
+		fmt.Println("Verified OK")
+	} else {
+		fmt.Fprintln(os.Stderr, "Invalid signature:", err)
+		os.Exit(ERR_INVALID_SIGNATURE)
 	}
 
+}
+
+func getVerificationKey(verificationKeyFile string) *rsa.PublicKey {
+	if verificationKeyFile == "" {
+		return pubKeyFromBytes(defaultKey)
+	} else {
+		keyData, err := os.ReadFile(verificationKeyFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error loading key:", err)
+			os.Exit(ERR_SYSTEM_FAILURE)
+		}
+		return pubKeyFromBytes(keyData)
+	}
+}
+
+func pubKeyFromBytes(keyData []byte) *rsa.PublicKey {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
 		fmt.Fprintln(os.Stderr, "Error decoding pemdata.")
@@ -413,15 +431,7 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest string)
 		fmt.Fprintln(os.Stderr, "Error parsing key:", err)
 		os.Exit(ERR_INVALID_FORMAT)
 	}
-
-	err = rsa.VerifyPKCS1v15(pubKey.(*rsa.PublicKey), crypto.SHA256, messageHashFromManifest[:], signature)
-	if err == nil {
-		fmt.Println("Verified OK")
-	} else {
-		fmt.Fprintln(os.Stderr, "Invalid signature:", err)
-		os.Exit(ERR_INVALID_SIGNATURE)
-	}
-
+	return pubKey.(*rsa.PublicKey)
 }
 
 const (
@@ -442,6 +452,7 @@ func main() {
 	target_dir := flag_set.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag_set.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
 	skip_efi_check := flag_set.Bool("skip-efi-check", false, "skip performing EFI safety checks")
+	verification_key_file := flag_set.String("verification-key", "", "path to verification key file")
 
 	flag_set.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <version>\n\n", os.Args[0])
@@ -488,7 +499,7 @@ func main() {
 	}
 
 	// verify the signature here
-	verifyManifest(repo, ctx, digest)
+	verifyManifest(repo, ctx, digest, *verification_key_file)
 
 	layer, size, err := getLayerByMediaType(repo, ctx, digest, *media_type)
 	if err != nil {
