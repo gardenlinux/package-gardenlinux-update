@@ -158,30 +158,26 @@ func getBlobBytes(repo *remote.Repository, ctx context.Context, ref string) ([]b
 }
 
 func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, error) {
-	index, err := getManifest(repo, ctx, tag)
+	indexData, err := getManifestBytes(repo, ctx, tag)
+	if err != nil {
+		return "", err
+	}
+
+	index := Index{}
+	err = json.Unmarshal(indexData, &index)
 	if err != nil {
 		return "", err
 	}
 
 	var digest string
 
-	for _, entry := range index["manifests"].([]interface{}) {
-		item := entry.(map[string]interface{})
-		item_digest := item["digest"].(string)
-		// annotations only exist for gardenlinux artifacts, "normal" container runtime entries do not have that field
-		if item["annotations"] == nil {
-			continue
-		}
-		item_annotations := item["annotations"].(map[string]interface{})
-		item_cname := item_annotations["cname"].(string)
-
-		if strings.HasPrefix(item_cname, cname) {
-			digest = item_digest
-			break
+	for _, entry := range index.Manifests {
+		if strings.HasPrefix(entry.Annotations.Cname, cname) {
+			digest = entry.Digest
+			return digest, nil
 		}
 	}
-
-	return digest, nil
+	return "", errors.New("no manifest found for cname " + cname)
 }
 
 func getLayerByMediaType(repo *remote.Repository, ctx context.Context, digest string, media_type string) (string, uint64, error) {
