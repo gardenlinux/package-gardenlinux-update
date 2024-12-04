@@ -48,6 +48,6 @@ type Manifest struct {
 	Layers []struct {
 		MediaType string `json:"mediaType"`
 		Digest    string `json:"digest"`
-		Size      int    `json:"size"`
+		Size      uint64 `json:"size"`
 	} `json:"layers"`
 }

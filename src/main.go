@@ -92,33 +92,6 @@ func checkEFI(expected_loader_entry string) error {
 	return nil
 }
 
-func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[string]interface{}, error) {
-	manifest_descriptor, err := repo.Resolve(ctx, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	mainfest_stream, err := repo.Fetch(ctx, manifest_descriptor)
-	if err != nil {
-		return nil, err
-	}
-	defer mainfest_stream.Close()
-
-	var manifest map[string]interface{}
-
-	manifest_content, err := io.ReadAll(mainfest_stream)
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(manifest_content, &manifest)
-	if err != nil {
-		return nil, err
-	}
-
-	return manifest, nil
-}
-
 func getManifestBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte, error) {
 	manifestDescriptor, err := repo.Resolve(ctx, ref)
 	if err != nil {
@@ -181,28 +154,24 @@ func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag 
 }
 
 func getLayerByMediaType(repo *remote.Repository, ctx context.Context, digest string, media_type string) (string, uint64, error) {
-	manifest, err := getManifest(repo, ctx, digest)
+	manifestData, err := getManifestBytes(repo, ctx, digest)
 	if err != nil {
 		return "", 0, err
 	}
 
-	var layer string
-	var size uint64
+	manifest := Manifest{}
+	err = json.Unmarshal(manifestData, &manifest)
+	if err != nil {
+		return "", 0, err
+	}
 
-	for _, entry := range manifest["layers"].([]interface{}) {
-		item := entry.(map[string]interface{})
-		item_digest := item["digest"].(string)
-		item_size := uint64(item["size"].(float64))
-		item_media_type := item["mediaType"].(string)
-
-		if item_media_type == media_type {
-			layer = item_digest
-			size = item_size
-			break
+	for _, layer := range manifest.Layers {
+		if media_type == layer.MediaType {
+			return layer.Digest, layer.Size, nil
 		}
 	}
 
-	return layer, size, nil
+	return "", 0, errors.New("no layer found for media type " + media_type)
 }
 
 func getFilesWithPrefix(dir string, prefix string) ([]string, error) {
@@ -513,7 +482,7 @@ func main() {
 
 	space, err := getAvailableSpace(*target_dir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		fmt.Fprintln(os.Stderr, "Error checking available space:", err)
 		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
@@ -521,7 +490,7 @@ func main() {
 		space_wanted := space_required - space
 		err := garbageClean(*target_dir, cname, current_version, int64(space_wanted))
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
+			fmt.Fprintln(os.Stderr, "Error cleaning up:", err)
 			os.Exit(ERR_SYSTEM_FAILURE)
 		}
 	}
