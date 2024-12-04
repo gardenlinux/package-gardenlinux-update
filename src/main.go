@@ -511,7 +511,6 @@ func main() {
 		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
-	panic(layer)
 	space_required := size + (1024 * 1024)
 
 	target_path := *target_dir + "/" + cname + "-" + version + "+3.efi"
