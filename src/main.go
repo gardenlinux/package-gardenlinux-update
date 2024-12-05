@@ -311,21 +311,21 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 	err = json.Unmarshal(signatureManifestBytes, &signatureManifest)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(ERR_INVALID_FORMAT)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 	// types
 	signatureStr := signatureManifest.Layers[0].Annotations.Signature
 	signature, err := base64.StdEncoding.DecodeString(signatureStr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(ERR_INVALID_FORMAT)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	messageHashStr := signatureManifest.Layers[0].Digest
 	messageHashFromManifest, err := hex.DecodeString(strings.Trim(messageHashStr, "sha256:"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(ERR_INVALID_FORMAT)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	// Here we pull the messageHashStr. This is insufficient for a proper signature verification. We have to
@@ -341,12 +341,12 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 	err = json.Unmarshal(message, &signatureMessage)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error unmarshalling signature message:", err)
-		os.Exit(ERR_INVALID_FORMAT)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 	// 2. Check if correct digest is in the signed message
 	if digest != signatureMessage.Critical.Image.DockerManifestDigest {
 		fmt.Fprintln(os.Stderr, "Error during signature verification, the digest of the manifest to be verified ", digest, " is not equal to the digest that is in the signed message ", signatureMessage.Critical.Image.DockerManifestDigest)
-		os.Exit(ERR_INVALID_SIGNATURE)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	// 3. hash the signature message
@@ -356,7 +356,7 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 		fmt.Fprintln(os.Stderr, "Error: the locally computed digest of the signed message (",
 			messageHashFromManifest, "), does not match the digest from the signature manifest (",
 			messageHashStr)
-		os.Exit(ERR_INVALID_SIGNATURE)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	pubKey := getVerificationKey(verificationKeyFile)
@@ -366,7 +366,7 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 		fmt.Println("Verified OK")
 	} else {
 		fmt.Fprintln(os.Stderr, "Invalid signature:", err)
-		os.Exit(ERR_INVALID_SIGNATURE)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 }
@@ -388,24 +388,23 @@ func pubKeyFromBytes(keyData []byte) *rsa.PublicKey {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
 		fmt.Fprintln(os.Stderr, "Error decoding pemdata.")
-		os.Exit(ERR_INVALID_FORMAT)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error parsing key:", err)
-		os.Exit(ERR_INVALID_FORMAT)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 	return pubKey.(*rsa.PublicKey)
 }
 
+// Error codes should represent whether it is worth to retry (network errors for example) or not to retry (invalid arguments)
 const (
-	_ = iota
-	ERR_INVALID_ARGUMENTS
-	ERR_SYSTEM_FAILURE
-	ERR_NETWORK_PROBLEMS
-	ERR_INVALID_FORMAT    // errors during type conversion
-	ERR_INVALID_SIGNATURE // manifest not signed correctly
+	_                     = iota
+	ERR_INVALID_ARGUMENTS // permanent
+	ERR_SYSTEM_FAILURE    // permanent
+	ERR_NETWORK_PROBLEMS  // retry makes sense
 )
 
 func main() {
