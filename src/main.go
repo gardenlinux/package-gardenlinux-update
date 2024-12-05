@@ -350,9 +350,9 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 	}
 
 	// 3. hash the signature message
-	hashed := sha256.Sum256(message)
+	local_hash := sha256.Sum256(message)
 	// 4. check if hash in signaturemanifest == locally computed hash of the message
-	if !bytes.Equal(hashed[:], messageHashFromManifest) {
+	if !bytes.Equal(local_hash[:], messageHashFromManifest) {
 		fmt.Fprintln(os.Stderr, "Error: the locally computed digest of the signed message (",
 			messageHashFromManifest, "), does not match the digest from the signature manifest (",
 			messageHashStr)
@@ -361,7 +361,7 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 
 	pubKey := getVerificationKey(verificationKeyFile)
 
-	err = rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, messageHashFromManifest[:], signature)
+	err = rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, local_hash[:], signature)
 	if err == nil {
 		fmt.Println("Verified OK")
 	} else {
