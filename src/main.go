@@ -372,19 +372,11 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 }
 
 func getVerificationKey(verificationKeyFile string) *rsa.PublicKey {
-	if verificationKeyFile == "" {
-		return pubKeyFromBytes(defaultKey)
-	} else {
-		keyData, err := os.ReadFile(verificationKeyFile)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error loading key:", err)
-			os.Exit(ERR_SYSTEM_FAILURE)
-		}
-		return pubKeyFromBytes(keyData)
+	keyData, err := os.ReadFile(verificationKeyFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error loading key:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
-}
-
-func pubKeyFromBytes(keyData []byte) *rsa.PublicKey {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
 		fmt.Fprintln(os.Stderr, "Error decoding pemdata.")
@@ -416,7 +408,7 @@ func main() {
 	target_dir := flag_set.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag_set.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
 	skip_efi_check := flag_set.Bool("skip-efi-check", false, "skip performing EFI safety checks")
-	verification_key_file := flag_set.String("verification-key", "", "path to verification key file")
+	verification_key_file := flag_set.String("verification-key", "/etc/gardenlinux/signing_key.pem", "path to verification key file")
 
 	flag_set.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <version>\n\n", os.Args[0])
