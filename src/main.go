@@ -408,7 +408,7 @@ func main() {
 	target_dir := flag_set.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag_set.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
 	skip_efi_check := flag_set.Bool("skip-efi-check", false, "skip performing EFI safety checks")
-	verification_key_file := flag_set.String("verification-key", "/etc/gardenlinux/signing_key.pem", "path to verification key file")
+	verification_key_file := flag_set.String("verification-key", "/etc/gardenlinux/oci_signing_key.pem", "path to verification key file")
 
 	flag_set.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <version>\n\n", os.Args[0])
