@@ -1,8 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -84,79 +92,86 @@ func checkEFI(expected_loader_entry string) error {
 	return nil
 }
 
-func getManifest(repo *remote.Repository, ctx context.Context, ref string) (map[string]interface{}, error) {
-	manifest_descriptor, err := repo.Resolve(ctx, ref)
+func getManifestBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte, error) {
+	manifestDescriptor, err := repo.Resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	manifestStream, err := repo.Fetch(ctx, manifestDescriptor)
+	if err != nil {
+		return nil, err
+	}
+	defer manifestStream.Close()
+
+	manifestContent, err := io.ReadAll(manifestStream)
 	if err != nil {
 		return nil, err
 	}
 
-	mainfest_stream, err := repo.Fetch(ctx, manifest_descriptor)
+	return manifestContent, nil
+}
+
+func getBlobBytes(repo *remote.Repository, ctx context.Context, ref string) ([]byte, error) {
+	manifestDescriptor, err := repo.Blobs().Resolve(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	defer mainfest_stream.Close()
+	manifestStream, err := repo.Fetch(ctx, manifestDescriptor)
+	if err != nil {
+		return nil, err
+	}
+	defer manifestStream.Close()
 
-	var manifest map[string]interface{}
-
-	manifest_content, err := io.ReadAll(mainfest_stream)
+	blobContent, err := io.ReadAll(manifestStream)
 	if err != nil {
 		return nil, err
 	}
 
-	err = json.Unmarshal(manifest_content, &manifest)
-	if err != nil {
-		return nil, err
-	}
-
-	return manifest, nil
+	return blobContent, nil
 }
 
 func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, error) {
-	manifest, err := getManifest(repo, ctx, tag)
+	indexData, err := getManifestBytes(repo, ctx, tag)
+	if err != nil {
+		return "", err
+	}
+
+	index := Index{}
+	err = json.Unmarshal(indexData, &index)
 	if err != nil {
 		return "", err
 	}
 
 	var digest string
 
-	for _, entry := range manifest["manifests"].([]interface{}) {
-		item := entry.(map[string]interface{})
-		item_digest := item["digest"].(string)
-		item_annotations := item["annotations"].(map[string]interface{})
-		item_cname := item_annotations["cname"].(string)
-
-		if strings.HasPrefix(item_cname, cname) {
-			digest = item_digest
-			break
+	for _, entry := range index.Manifests {
+		if strings.HasPrefix(entry.Annotations.Cname, cname) {
+			digest = entry.Digest
+			return digest, nil
 		}
 	}
-
-	return digest, nil
+	return "", errors.New("no manifest found for cname " + cname)
 }
 
 func getLayerByMediaType(repo *remote.Repository, ctx context.Context, digest string, media_type string) (string, uint64, error) {
-	manifest, err := getManifest(repo, ctx, digest)
+	manifestData, err := getManifestBytes(repo, ctx, digest)
 	if err != nil {
 		return "", 0, err
 	}
 
-	var layer string
-	var size uint64
+	manifest := Manifest{}
+	err = json.Unmarshal(manifestData, &manifest)
+	if err != nil {
+		return "", 0, err
+	}
 
-	for _, entry := range manifest["layers"].([]interface{}) {
-		item := entry.(map[string]interface{})
-		item_digest := item["digest"].(string)
-		item_size := uint64(item["size"].(float64))
-		item_media_type := item["mediaType"].(string)
-
-		if item_media_type == media_type {
-			layer = item_digest
-			size = item_size
-			break
+	for _, layer := range manifest.Layers {
+		if media_type == layer.MediaType {
+			return layer.Digest, layer.Size, nil
 		}
 	}
 
-	return layer, size, nil
+	return "", 0, errors.New("no layer found for media type " + media_type)
 }
 
 func getFilesWithPrefix(dir string, prefix string) ([]string, error) {
@@ -284,9 +299,105 @@ func garbageClean(directory, cname, current_version string, size_wanted int64) e
 	return nil
 }
 
-const ERR_INVALID_ARGUMENTS = 1
-const ERR_SYSTEM_FAILURE = 2
-const ERR_NETWORK_PROBLEMS = 3
+func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verificationKeyFile string) {
+	signatureTag := strings.Replace(digest, "sha256:", "sha256-", 1) + ".sig"
+	signatureManifestBytes, err := getManifestBytes(repo, ctx, signatureTag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_NETWORK_PROBLEMS)
+	}
+
+	signatureManifest := SignatureManifest{}
+	err = json.Unmarshal(signatureManifestBytes, &signatureManifest)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+	// types
+	signatureStr := signatureManifest.Layers[0].Annotations.Signature
+	signature, err := base64.StdEncoding.DecodeString(signatureStr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+
+	messageHashStr := signatureManifest.Layers[0].Digest
+	messageHashFromManifest, err := hex.DecodeString(strings.Trim(messageHashStr, "sha256:"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+
+	// Here we pull the messageHashStr. This is insufficient for a proper signature verification. We have to
+	// check the messages contents, validate that it contains the correct manifest digest, and then hash it ourselves.
+
+	// 1. Get signed message
+	message, err := getBlobBytes(repo, ctx, messageHashStr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error fetching signed message:", err)
+		os.Exit(ERR_NETWORK_PROBLEMS)
+	}
+	signatureMessage := SignatureMessage{}
+	err = json.Unmarshal(message, &signatureMessage)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error unmarshalling signature message:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+	// 2. Check if correct digest is in the signed message
+	if digest != signatureMessage.Critical.Image.DockerManifestDigest {
+		fmt.Fprintln(os.Stderr, "Error during signature verification, the digest of the manifest to be verified ", digest, " is not equal to the digest that is in the signed message ", signatureMessage.Critical.Image.DockerManifestDigest)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+
+	// 3. hash the signature message
+	local_hash := sha256.Sum256(message)
+	// 4. check if hash in signaturemanifest == locally computed hash of the message
+	if !bytes.Equal(local_hash[:], messageHashFromManifest) {
+		fmt.Fprintln(os.Stderr, "Error: the locally computed digest of the signed message (",
+			messageHashFromManifest, "), does not match the digest from the signature manifest (",
+			messageHashStr)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+
+	pubKey := getVerificationKey(verificationKeyFile)
+
+	err = rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, local_hash[:], signature)
+	if err == nil {
+		fmt.Println("Verified OK")
+	} else {
+		fmt.Fprintln(os.Stderr, "Invalid signature:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+
+}
+
+func getVerificationKey(verificationKeyFile string) *rsa.PublicKey {
+	keyData, err := os.ReadFile(verificationKeyFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error loading key:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+	block, _ := pem.Decode(keyData)
+	if block == nil {
+		fmt.Fprintln(os.Stderr, "Error decoding pemdata.")
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error parsing key:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
+	}
+	return pubKey.(*rsa.PublicKey)
+}
+
+// Error codes should represent whether it is worth to retry (network errors for example) or not to retry (invalid arguments)
+const (
+	_                     = iota
+	ERR_INVALID_ARGUMENTS // permanent
+	ERR_SYSTEM_FAILURE    // permanent
+	ERR_NETWORK_PROBLEMS  // retry makes sense
+)
 
 func main() {
 	flag_set := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
@@ -297,6 +408,7 @@ func main() {
 	target_dir := flag_set.String("target-dir", "/efi/EFI/Linux", "directory to write artifacts to")
 	os_release_path := flag_set.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
 	skip_efi_check := flag_set.Bool("skip-efi-check", false, "skip performing EFI safety checks")
+	verification_key_file := flag_set.String("verification-key", "/etc/gardenlinux/oci_signing_key.pem", "path to verification key file")
 
 	flag_set.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <version>\n\n", os.Args[0])
@@ -342,10 +454,17 @@ func main() {
 		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 
+	// verify the signature here
+	verifyManifest(repo, ctx, digest, *verification_key_file)
+
 	layer, size, err := getLayerByMediaType(repo, ctx, digest, *media_type)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_NETWORK_PROBLEMS)
+	}
+	if layer == "" || size == 0 {
+		fmt.Fprintln(os.Stderr, "No layer found for "+cname+" version: "+version+"  and mediatype"+*media_type+" on "+*repo_url)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	space_required := size + (1024 * 1024)
@@ -354,7 +473,7 @@ func main() {
 
 	space, err := getAvailableSpace(*target_dir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		fmt.Fprintln(os.Stderr, "Error checking available space:", err)
 		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
@@ -362,7 +481,7 @@ func main() {
 		space_wanted := space_required - space
 		err := garbageClean(*target_dir, cname, current_version, int64(space_wanted))
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
+			fmt.Fprintln(os.Stderr, "Error cleaning up:", err)
 			os.Exit(ERR_SYSTEM_FAILURE)
 		}
 	}
