@@ -68,7 +68,7 @@ func getCname(path string) (string, string, error) {
 		return "", "", errors.New("GARDENLINUX_CNAME missing from os-release")
 	}
 
-	cname = strings.Trim(cname, "-"+version)
+	cname = strings.TrimSuffix(cname, "-"+version)
 
 	return cname, version, nil
 }
@@ -322,7 +322,7 @@ func verifyManifest(repo *remote.Repository, ctx context.Context, digest, verifi
 	}
 
 	messageHashStr := signatureManifest.Layers[0].Digest
-	messageHashFromManifest, err := hex.DecodeString(strings.Trim(messageHashStr, "sha256:"))
+	messageHashFromManifest, err := hex.DecodeString(strings.TrimPrefix(messageHashStr, "sha256:"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_SYSTEM_FAILURE)
