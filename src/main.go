@@ -84,7 +84,14 @@ func checkEFI(expected_loader_entry string) error {
 		return errors.New("not booted with systemd EFI stub")
 	}
 
-	loader_entry := string(data[4:])
+	var utf8_data []byte
+	for i := 4; i < len(data); i += 2 {
+		utf8_data = append(utf8_data, data[i])
+	}
+
+	loader_entry := string(utf8_data)
+	loader_entry = strings.Trim(loader_entry, "\x00")
+
 	if loader_entry != expected_loader_entry {
 		return errors.New("booted entry does not match expected value")
 	}
