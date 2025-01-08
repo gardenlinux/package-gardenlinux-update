@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -406,6 +407,42 @@ const (
 	ERR_NETWORK_PROBLEMS  // retry makes sense
 )
 
+func runHooks(hookDir string) error {
+	files, err := os.ReadDir(hookDir)
+	if os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	var executables []string
+	for _, file := range files {
+		path := hookDir + "/" + file.Name()
+
+		stat, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+
+		if stat.Mode().IsRegular() && stat.Mode()&0100 != 0 {
+			executables = append(executables, path)
+		}
+	}
+
+	sort.Strings(executables)
+	for _, executable := range executables {
+		cmd := exec.Command(executable)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		err = cmd.Run()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	flag_set := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	flag_set.SetOutput(os.Stderr)
@@ -416,6 +453,7 @@ func main() {
 	os_release_path := flag_set.String("os-release", "/etc/os-release", "alternative path where the os-release file is read from")
 	skip_efi_check := flag_set.Bool("skip-efi-check", false, "skip performing EFI safety checks")
 	verification_key_file := flag_set.String("verification-key", "/etc/gardenlinux/oci_signing_key.pem", "path to verification key file")
+	hooks_dir := flag_set.String("hooks-dir", "/etc/gardenlinux/update-hooks", "path to update hooks directory")
 
 	flag_set.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <version>\n\n", os.Args[0])
@@ -519,5 +557,11 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_NETWORK_PROBLEMS)
+	}
+
+	err = runHooks(*hooks_dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 }
