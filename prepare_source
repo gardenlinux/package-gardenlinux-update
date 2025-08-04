@@ -1,3 +1,10 @@
-import_src src
 pkg=gardenlinux-update
-version=0.7
+version="0.7"
+version_orig="${version}gl0"
+
+version_suffix=gl0+bp1877
+
+GL_UPDATE_SRC=$(mktemp -d)
+git clone -b "$version_orig" https://github.com/gardenlinux/package-gardenlinux-update "$GL_UPDATE_SRC"
+import_src "$GL_UPDATE_SRC/src"
+rm -fR "$GL_UPDATE_SRC"
