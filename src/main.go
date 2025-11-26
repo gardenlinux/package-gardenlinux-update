@@ -74,6 +74,17 @@ func getCname(path string) (string, string, error) {
 	return cname, version, nil
 }
 
+func normalizeLoaderEntry(name string) string {
+	name = strings.TrimSuffix(name, ".efi")
+
+	// strip boot counting: everything after first '+'
+	if idx := strings.Index(name, "+"); idx != -1 {
+		name = name[:idx]
+	}
+
+	return name
+}
+
 func checkEFI(expected_loader_entry string) error {
 	_, err := os.Stat("/sys/firmware/efi")
 	if err != nil {
@@ -93,7 +104,9 @@ func checkEFI(expected_loader_entry string) error {
 	loader_entry := string(utf8_data)
 	loader_entry = strings.Trim(loader_entry, "\x00")
 
-	if loader_entry != expected_loader_entry {
+	normalized_loader_entry := normalizeLoaderEntry(loader_entry)
+
+	if normalized_loader_entry != expected_loader_entry {
 		return errors.New("booted entry does not match expected value")
 	}
 
@@ -478,7 +491,7 @@ func main() {
 	}
 
 	if !*skip_efi_check {
-		err = checkEFI(cname + "-" + current_version + ".efi")
+		err = checkEFI(cname + "-" + current_version)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(ERR_SYSTEM_FAILURE)
