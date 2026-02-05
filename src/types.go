@@ -29,6 +29,7 @@ type Index struct {
 		Platform  struct {
 			Architecture string `json:"architecture"`
 			Os           string `json:"os"`
+			OsVersion     string `json:"os.version"`
 		} `json:"platform"`
 		Annotations struct {
 			Cname        string `json:"cname"`
