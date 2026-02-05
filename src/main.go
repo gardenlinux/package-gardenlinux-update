@@ -151,27 +151,27 @@ func getBlobBytes(repo *remote.Repository, ctx context.Context, ref string) ([]b
 	return blobContent, nil
 }
 
-func getManifestDigestByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, error) {
+func getManifestDigestAndCanonicalVersionByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, string, error) {
 	indexData, err := getManifestBytes(repo, ctx, tag)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	index := Index{}
 	err = json.Unmarshal(indexData, &index)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-
-	var digest string
 
 	for _, entry := range index.Manifests {
 		if strings.HasPrefix(entry.Annotations.Cname, cname) {
-			digest = entry.Digest
-			return digest, nil
+			if entry.Platform.OsVersion == "" {
+				return "", "", errors.New("index entry matched cname but platform.os.version is empty for digest " + entry.Digest)
+			}
+			return entry.Digest, entry.Platform.OsVersion, nil
 		}
 	}
-	return "", errors.New("no manifest found for cname " + cname)
+	return "", "", errors.New("no manifest found for cname " + cname)
 }
 
 func getLayerByMediaType(repo *remote.Repository, ctx context.Context, digest string, media_type string) (string, uint64, error) {
@@ -506,7 +506,7 @@ func main() {
 		os.Exit(ERR_INVALID_ARGUMENTS)
 	}
 
-	digest, err := getManifestDigestByCname(repo, ctx, version, cname)
+	digest, canonical_version, err := getManifestDigestAndCanonicalVersionByCname(repo, ctx, version, cname)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_NETWORK_PROBLEMS)
@@ -521,13 +521,13 @@ func main() {
 		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 	if layer == "" || size == 0 {
-		fmt.Fprintln(os.Stderr, "No layer found for "+cname+" version: "+version+"  and mediatype"+*media_type+" on "+*repo_url)
+		fmt.Fprintln(os.Stderr, "No layer found for "+cname+" version: "+canonical_version+"  and mediatype"+*media_type+" on "+*repo_url)
 		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	space_required := size + (1024 * 1024)
 
-	target_path := *target_dir + "/" + cname + "-" + version + "+3.efi"
+	target_path := *target_dir + "/" + cname + "-" + canonical_version + "+3.efi"
 
 	space, err := getAvailableSpace(*target_dir)
 	if err != nil {
