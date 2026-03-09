@@ -1,0 +1,12 @@
+diff --git a/src/go.mod b/src/go.mod
+index 9f17952..671806f 100644
+--- a/src/go.mod
++++ b/src/go.mod
+@@ -1,6 +1,6 @@
+ module gardenlinux-update
+ 
+-go 1.23.2
++go 1.24.13
+ 
+ require oras.land/oras-go/v2 v2.5.0
+ 

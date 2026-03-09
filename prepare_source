@@ -1,4 +1,6 @@
 import_src src
 pkg=gardenlinux-update
 version=0.9
-version_suffix=gl0+bp1877
+version_suffix=gl1+bp1877
+
+import_upstream_patches patches/
