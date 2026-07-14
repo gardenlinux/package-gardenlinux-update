@@ -1,4 +1,4 @@
 import_src src
 pkg=gardenlinux-update
 version=0.9
-version_suffix=gl2~bp2150
+version_suffix=gl3~bp2150
