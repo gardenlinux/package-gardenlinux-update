@@ -9,7 +9,7 @@ github.com/opencontainers/image-spec/specs-go/v1
 ## explicit; go 1.18
 golang.org/x/sync/errgroup
 golang.org/x/sync/semaphore
-# oras.land/oras-go/v2 v2.5.0
+# oras.land/oras-go/v2 v2.6.1
 ## explicit; go 1.21
 oras.land/oras-go/v2/content
 oras.land/oras-go/v2/errdef
