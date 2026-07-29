@@ -1,6 +1,6 @@
 module gardenlinux-update
 
-go 1.26.6
+go 1.26.5
 
 require oras.land/oras-go/v2 v2.6.1
 
