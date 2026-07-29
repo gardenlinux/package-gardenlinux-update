@@ -1,8 +1,8 @@
 module gardenlinux-update
 
-go 1.23.2
+go 1.26.6
 
-require oras.land/oras-go/v2 v2.5.0
+require oras.land/oras-go/v2 v2.6.1
 
 require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
