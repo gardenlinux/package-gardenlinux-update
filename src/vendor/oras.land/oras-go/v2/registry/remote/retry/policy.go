@@ -16,12 +16,15 @@ limitations under the License.
 package retry
 
 import (
+	"errors"
 	"hash/maphash"
+	"io"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -39,11 +42,18 @@ var DefaultPolicy Policy = &GenericPolicy{
 }
 
 // DefaultPredicate is a predicate that retries on 5xx errors, 429 Too Many
-// Requests, 408 Request Timeout and on network dial timeout.
+// Requests, 408 Request Timeout, on network dial timeout, and on a connection
+// reset by peer or an unexpected EOF, which net/http does not retry on its own
+// when the connection was not reused.
 var DefaultPredicate Predicate = func(resp *http.Response, err error) (bool, error) {
 	if err != nil {
 		// retry on Dial timeout
 		if err, ok := err.(net.Error); ok && err.Timeout() {
+			return true, nil
+		}
+		// retry on connection reset by peer and unexpected EOF, which
+		// net/http only retries on its own for a reused connection
+		if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return true, nil
 		}
 		return false, err
@@ -88,7 +98,7 @@ type Backoff func(attempt int, resp *http.Response) time.Duration
 // jitter. The backoff is calculated as:
 //
 //	temp = backoff * factor ^ attempt
-//	interval = temp * (1 - jitter) + rand.Int63n(2 * jitter * temp)
+//	interval = temp * (1 - jitter) + rand.Int64N(2 * jitter * temp)
 //
 // The HTTP response is checked for a Retry-After header. If it is present, the
 // value is used as the backoff duration.
@@ -96,7 +106,7 @@ func ExponentialBackoff(backoff time.Duration, factor, jitter float64) Backoff {
 	return func(attempt int, resp *http.Response) time.Duration {
 		var h maphash.Hash
 		h.SetSeed(maphash.MakeSeed())
-		rand := rand.New(rand.NewSource(int64(h.Sum64())))
+		rand := rand.New(rand.NewPCG(0, h.Sum64()))
 
 		// check Retry-After
 		if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
@@ -109,7 +119,13 @@ func ExponentialBackoff(backoff time.Duration, factor, jitter float64) Backoff {
 
 		// do exponential backoff with jitter
 		temp := float64(backoff) * math.Pow(factor, float64(attempt))
-		return time.Duration(temp*(1-jitter)) + time.Duration(rand.Int63n(int64(2*jitter*temp)))
+		interval := time.Duration(temp * (1 - jitter))
+		// skip the random term when the jitter range is zero,
+		// as rand.Int64N panics on a zero range
+		if jitterRange := int64(2 * jitter * temp); jitterRange > 0 {
+			interval += time.Duration(rand.Int64N(jitterRange))
+		}
+		return interval
 	}
 }
 
