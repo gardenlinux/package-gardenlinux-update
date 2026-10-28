@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,26 +53,24 @@ func parseOsRelease(data string) map[string]string {
 	return result
 }
 
-func getCname(path string) (string, string, error) {
+func getCnameArchVersion(path string) (string, string, string, error) {
 	os_release_content, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	os_release := parseOsRelease(string(os_release_content))
 	version, ok := os_release["GARDENLINUX_VERSION"]
 	if !ok {
-		return "", "", errors.New("GARDENLINUX_VERSION missing from os-release")
+		return "", "", "", errors.New("GARDENLINUX_VERSION missing from os-release")
 	}
 
 	cname, ok := os_release["GARDENLINUX_CNAME"]
 	if !ok {
-		return "", "", errors.New("GARDENLINUX_CNAME missing from os-release")
+		return "", "", "", errors.New("GARDENLINUX_CNAME missing from os-release")
 	}
 
-	cname = strings.TrimSuffix(cname, "-"+version)
-
-	return cname, version, nil
+	return cname, runtime.GOARCH, version, nil
 }
 
 func normalizeLoaderEntry(name string) string {
@@ -151,7 +150,7 @@ func getBlobBytes(repo *remote.Repository, ctx context.Context, ref string) ([]b
 	return blobContent, nil
 }
 
-func getManifestDigestAndCanonicalVersionByCname(repo *remote.Repository, ctx context.Context, tag string, cname string) (string, string, error) {
+func getManifestDigestAndCanonicalVersionByCnameAndArch(repo *remote.Repository, ctx context.Context, tag string, cname string, arch string) (string, string, error) {
 	indexData, err := getManifestBytes(repo, ctx, tag)
 	if err != nil {
 		return "", "", err
@@ -164,14 +163,19 @@ func getManifestDigestAndCanonicalVersionByCname(repo *remote.Repository, ctx co
 	}
 
 	for _, entry := range index.Manifests {
-		if strings.HasPrefix(entry.Annotations.Cname, cname) {
+		// Match the cname annotation as a prefix rather than by equality: for now the manifest keeps the full
+		// artifact base name ({cname}-{arch}-{version}-{commit}) in the cname annotation for compatibility with
+		// older versions of this tool. Eventually it should carry only the cname (per ADR 0035); accepting either
+		// form here means that switch won't break this tool. The architecture is matched by equality on its own
+		// annotation to disambiguate between architectures.
+		if strings.HasPrefix(entry.Annotations.Cname, cname) && entry.Annotations.Architecture == arch {
 			if entry.Platform.OsVersion == "" {
-				return "", "", errors.New("index entry matched cname but platform.os.version is empty for digest " + entry.Digest)
+				return "", "", errors.New("index entry matched cname and arch but platform.os.version is empty for digest " + entry.Digest)
 			}
 			return entry.Digest, entry.Platform.OsVersion, nil
 		}
 	}
-	return "", "", errors.New("no manifest found for cname " + cname)
+	return "", "", errors.New("no manifest found for cname " + cname + " arch " + arch)
 }
 
 func getLayerByMediaType(repo *remote.Repository, ctx context.Context, digest string, media_type string) (string, uint64, error) {
@@ -278,13 +282,13 @@ func sortFileInfos(fileInfos []FileInfo) {
 	})
 }
 
-func garbageClean(directory, cname, current_version string, size_wanted int64) error {
-	files, err := getFilesWithPrefix(directory, cname)
+func garbageClean(directory, flavor, current_version string, size_wanted int64) error {
+	files, err := getFilesWithPrefix(directory, flavor)
 	if err != nil {
 		return err
 	}
 
-	file_infos := parseFileInfos(files, cname)
+	file_infos := parseFileInfos(files, flavor)
 	sortFileInfos(file_infos)
 
 	for _, file_info := range file_infos {
@@ -484,14 +488,16 @@ func main() {
 	}
 	version := flag_set.Arg(0)
 
-	cname, current_version, err := getCname(*os_release_path)
+	cname, arch, current_version, err := getCnameArchVersion(*os_release_path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_INVALID_ARGUMENTS)
 	}
 
+	flavor := cname + "-" + arch
+
 	if !*skip_efi_check {
-		err = checkEFI(cname + "-" + current_version)
+		err = checkEFI(flavor + "-" + current_version)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(ERR_SYSTEM_FAILURE)
@@ -506,7 +512,7 @@ func main() {
 		os.Exit(ERR_INVALID_ARGUMENTS)
 	}
 
-	digest, canonical_version, err := getManifestDigestAndCanonicalVersionByCname(repo, ctx, version, cname)
+	digest, canonical_version, err := getManifestDigestAndCanonicalVersionByCnameAndArch(repo, ctx, version, cname, arch)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(ERR_NETWORK_PROBLEMS)
@@ -521,13 +527,13 @@ func main() {
 		os.Exit(ERR_NETWORK_PROBLEMS)
 	}
 	if layer == "" || size == 0 {
-		fmt.Fprintln(os.Stderr, "No layer found for "+cname+" version: "+canonical_version+"  and mediatype"+*media_type+" on "+*repo_url)
+		fmt.Fprintln(os.Stderr, "No layer found for "+flavor+" version: "+canonical_version+"  and mediatype"+*media_type+" on "+*repo_url)
 		os.Exit(ERR_SYSTEM_FAILURE)
 	}
 
 	space_required := size + (1024 * 1024)
 
-	target_path := *target_dir + "/" + cname + "-" + canonical_version + "+3.efi"
+	target_path := *target_dir + "/" + flavor + "-" + canonical_version + "+3.efi"
 
 	space, err := getAvailableSpace(*target_dir)
 	if err != nil {
@@ -537,7 +543,7 @@ func main() {
 
 	if space < space_required {
 		space_wanted := space_required - space
-		err := garbageClean(*target_dir, cname, current_version, int64(space_wanted))
+		err := garbageClean(*target_dir, flavor, current_version, int64(space_wanted))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error cleaning up:", err)
 			os.Exit(ERR_SYSTEM_FAILURE)
