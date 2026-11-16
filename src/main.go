@@ -163,12 +163,19 @@ func getManifestDigestAndCanonicalVersionByCnameAndArch(repo *remote.Repository,
 	}
 
 	for _, entry := range index.Manifests {
-		// Match the cname annotation as a prefix rather than by equality: for now the manifest keeps the full
-		// artifact base name ({cname}-{arch}-{version}-{commit}) in the cname annotation for compatibility with
-		// older versions of this tool. Eventually it should carry only the cname (per ADR 0035); accepting either
-		// form here means that switch won't break this tool. The architecture is matched by equality on its own
-		// annotation to disambiguate between architectures.
-		if strings.HasPrefix(entry.Annotations.Cname, cname) && entry.Annotations.Architecture == arch {
+		var matched bool
+		if entry.Annotations.Cname != "" {
+			// New manifest format (ADR 0035): the cname annotation holds only the cname, so match it
+			// exactly and disambiguate the architecture via its own annotation.
+			matched = entry.Annotations.Cname == cname && entry.Annotations.Architecture == arch
+		} else {
+			// Legacy manifest format: the deprecated cname annotation holds the full artifact base name
+			// ({cname}-{arch}-{version}-{commit}), which is more than the cname. Fall back to prefix
+			// matching it against the flavor ({cname}-{arch}), exactly as this tool did before ADR 0035.
+			matched = strings.HasPrefix(entry.Annotations.CnameLegacy, cname+"-"+arch)
+		}
+
+		if matched {
 			if entry.Platform.OsVersion == "" {
 				return "", "", errors.New("index entry matched cname and arch but platform.os.version is empty for digest " + entry.Digest)
 			}
